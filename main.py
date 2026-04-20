@@ -221,5 +221,42 @@ async def stop(ctx):
         # await ctx.voice_client.disconnect()
         await ctx.send("Bot tidak diperbolehkan keluar oleh Admint")
 
+@bot.command(aliases=['pp'])
+async def playpriority(ctx, *, search: str):
+    """Memprioritaskan lagu/playlist untuk diputar langsung tanpa menghapus antrean"""
+    if not ctx.author.voice:
+        return await ctx.send("Masuk ke voice channel dulu ya!")
+
+    if not ctx.voice_client:
+        vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        vc.autoplay = wavelink.AutoPlayMode.partial
+        vc.queue.mode = wavelink.QueueMode.loop_all
+    else:
+        vc: wavelink.Player = ctx.voice_client
+
+    # Cari lagu atau playlist
+    tracks = await wavelink.Playable.search(search)
+    if not tracks:
+        return await ctx.send("Lagu/Playlist tidak ditemukan.")
+
+    if isinstance(tracks, wavelink.Playlist):
+        # JIKA PLAYLIST
+        playlist_tracks = list(tracks)
+        # Memasukkan dari urutan belakang agar playlist tersusun benar di awal antrean
+        for track in reversed(playlist_tracks):
+            vc.queue.put_at(0, track)
+        await ctx.send(f'🌟 Memutar langsung playlist: **{tracks.name}** ({len(playlist_tracks)} lagu) tanpa menghapus antrean.')
+    else:
+        # JIKA SINGLE TRACK
+        track = tracks[0]
+        vc.queue.put_at(0, track)
+        await ctx.send(f'🌟 Memutar langsung lagu: **{track.title}** tanpa menghapus antrean.')
+
+    # Langsung putar lagu baru (skip lagu yang sekarang sedang jalan jika ada)
+    if vc.playing:
+        await vc.skip(force=True)
+    else:
+        await vc.play(vc.queue.get())
+
 # PENTING: Jangan berikan token ini ke publik!
 bot.run('')
