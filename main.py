@@ -15,16 +15,9 @@ class MusicBot(commands.Bot):
         await wavelink.Pool.connect(nodes=[node], client=self)
 
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
-        player = payload.player
-        if not player:
-            return
-            
-        if not player.queue.is_empty:
-            next_track = player.queue.get()
-            await player.play(next_track)
-        else:
-            # Ubahan: Bot tidak akan keluar (disconnect) meskipun antrean habis
-            pass
+        # Wavelink 3.0+ menangani pemutaran antrean otomatis melalui vc.autoplay
+        # Jadi kita tidak perlu memanggil player.play(next_track) secara manual.
+        pass
 
 class QueuePagination(discord.ui.View):
     def __init__(self, queue_list, timeout=180):
@@ -68,6 +61,8 @@ async def play(ctx, *, search: str):
 
     if not ctx.voice_client:
         vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        # Aktifkan Autoplay parsial untuk otomatisasi antrean Wavelink
+        vc.autoplay = wavelink.AutoPlayMode.partial
         # Jadikan kucaylp (Loop All) aktif secara default (otomatis mengulang antrean yang habis)
         vc.queue.mode = wavelink.QueueMode.loop_all
     else:
@@ -179,6 +174,7 @@ async def switchplaylist(ctx, *, search: str):
 
     if not ctx.voice_client:
         vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        vc.autoplay = wavelink.AutoPlayMode.partial
         vc.queue.mode = wavelink.QueueMode.loop_all
     else:
         vc: wavelink.Player = ctx.voice_client
@@ -226,4 +222,4 @@ async def stop(ctx):
         await ctx.send("Bot tidak diperbolehkan keluar oleh Admint")
 
 # PENTING: Jangan berikan token ini ke publik!
-bot.run('MTM5MDEyNDE2MTI2MjgxMzE4NA.Go23NC.QC3t1dlsH-iLjIRViR_UtqCpeMEGZp7Mtk3Los')
+bot.run('')
