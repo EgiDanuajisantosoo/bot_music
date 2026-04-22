@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 import wavelink
+from aiohttp import web
+import os
 
 class MusicBot(commands.Bot):
     def __init__(self):
@@ -13,6 +15,7 @@ class MusicBot(commands.Bot):
         # Jika menggunakan Spotify, pastikan plugin LavaSrc sudah terpasang di Lavalink
         node = wavelink.Node(uri='http://127.0.0.1:2333', password='youshallnotpass')
         await wavelink.Pool.connect(nodes=[node], client=self)
+        bot.loop.create_task(start_web_server())
 
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
         # Wavelink 3.0+ menangani pemutaran antrean otomatis melalui vc.autoplay
@@ -51,6 +54,132 @@ class QueuePagination(discord.ui.View):
         self.current_page += 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+# --- API Backend ---
+app = web.Application()
+
+def get_player():
+    if not bot.voice_clients:
+        return None
+    return bot.voice_clients[0]
+
+async def api_status(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"status": "disconnected"})
+    
+    current = vc.current
+    if not current:
+        return web.json_response({"status": "idle"})
+        
+    return web.json_response({
+        "status": "playing" if vc.playing else "paused",
+        "track": {
+            "title": current.title,
+            "author": current.author,
+            "uri": current.uri,
+            "length": current.length,
+            "position": vc.position,
+            "artwork": current.artwork
+        },
+        "queue_length": len(vc.queue)
+    })
+
+async def api_queue(request):
+    vc = get_player()
+    if not vc or vc.queue.is_empty:
+        return web.json_response({"queue": []})
+        
+    queue_data = []
+    for i, track in enumerate(vc.queue):
+        queue_data.append({
+            "index": i,
+            "title": track.title,
+            "author": track.author,
+            "length": track.length
+        })
+    return web.json_response({"queue": queue_data})
+
+async def api_skip(request):
+    vc = get_player()
+    if vc and vc.playing:
+        await vc.skip(force=True)
+        return web.json_response({"success": True})
+    return web.json_response({"success": False, "error": "Not playing"})
+
+async def api_clear(request):
+    vc = get_player()
+    if vc:
+        vc.queue.clear()
+        vc.queue.history.clear()
+        return web.json_response({"success": True})
+    return web.json_response({"success": False})
+
+async def api_remove(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"success": False})
+        
+    try:
+        data = await request.json()
+        index = int(data.get("index", -1))
+        if 0 <= index < len(vc.queue):
+            del vc.queue[index]
+            return web.json_response({"success": True})
+    except Exception as e:
+        pass
+    return web.json_response({"success": False})
+
+async def api_play(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"success": False, "error": "Bot not in voice channel"})
+        
+    try:
+        data = await request.json()
+        search = data.get("query")
+        if not search:
+            return web.json_response({"success": False, "error": "Empty query"})
+            
+        tracks = await wavelink.Playable.search(search)
+        if not tracks:
+            return web.json_response({"success": False, "error": "Not found"})
+            
+        if isinstance(tracks, wavelink.Playlist):
+            await vc.queue.put_wait(tracks)
+        else:
+            await vc.queue.put_wait(tracks[0])
+            
+        if not vc.playing:
+            await vc.play(vc.queue.get())
+            
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)})
+
+public_dir = os.path.join(os.path.dirname(__file__), 'public')
+if not os.path.exists(public_dir):
+    os.makedirs(public_dir)
+
+async def index_handler(request):
+    return web.FileResponse(os.path.join(public_dir, 'index.html'))
+
+app.router.add_get('/api/status', api_status)
+app.router.add_get('/api/queue', api_queue)
+app.router.add_post('/api/skip', api_skip)
+app.router.add_post('/api/clear', api_clear)
+app.router.add_post('/api/remove', api_remove)
+app.router.add_post('/api/play', api_play)
+app.router.add_get('/', index_handler)
+app.router.add_static('/', public_dir)
+
+async def start_web_server():
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("Web Dashboard berjalan di http://localhost:8080")
+# --- End API Backend ---
 
 bot = MusicBot()
 

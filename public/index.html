@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kucay Music Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="background-glow"></div>
+    
+    <div class="container">
+        <!-- Sidebar / Navigation -->
+        <aside class="sidebar glass-panel">
+            <div class="brand">
+                <i class="fa-solid fa-music"></i>
+                <h2>KucayBot</h2>
+            </div>
+            <nav>
+                <ul>
+                    <li class="active"><i class="fa-solid fa-house"></i> Dashboard</li>
+                    <li onclick="alert('Ini akan mengarahkan ke halaman pengaturan bot!')"><i class="fa-solid fa-gear"></i> Settings</li>
+                </ul>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header">
+                <h1>Now Playing</h1>
+                <div class="status-badge" id="bot-status">
+                    <span class="dot"></span> <span id="status-text">Disconnected</span>
+                </div>
+            </header>
+
+            <section class="player-container">
+                <div class="player-card glass-panel" id="player-card">
+                    <div class="artwork-container">
+                        <img id="track-artwork" src="https://via.placeholder.com/200" alt="Album Art">
+                    </div>
+                    <div class="track-info">
+                        <h2 id="track-title">Nothing playing right now</h2>
+                        <p id="track-author">Play some music to get started!</p>
+                    </div>
+                    <div class="progress-container">
+                        <div class="time" id="time-current">0:00</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill"></div>
+                        </div>
+                        <div class="time" id="time-total">0:00</div>
+                    </div>
+                    <div class="controls">
+                        <button id="btn-skip" class="control-btn" title="Skip to next track">
+                            <i class="fa-solid fa-forward-step"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="queue-container glass-panel">
+                    <div class="queue-header">
+                        <h3>Up Next</h3>
+                        <button id="btn-clear" class="btn-secondary"><i class="fa-solid fa-trash"></i> Clear Queue</button>
+                    </div>
+                    
+                    <div class="add-song">
+                        <input type="text" id="search-input" placeholder="Search or paste a link...">
+                        <button id="btn-play" class="btn-primary"><i class="fa-solid fa-play"></i> Add</button>
+                    </div>
+
+                    <ul class="queue-list" id="queue-list">
+                        <!-- Queue items will be injected here via JS -->
+                        <div class="empty-state">Queue is empty</div>
+                    </ul>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
