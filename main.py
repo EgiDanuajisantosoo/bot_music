@@ -54,6 +54,15 @@ class QueuePagination(discord.ui.View):
 
 bot = MusicBot()
 
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("⚠️ Kelihatannya kamu lupa memasukkan judul lagu atau linknya! Contoh: `kucayp <judul lagu>`")
+    elif isinstance(error, commands.CommandNotFound):
+        pass # Abaikan jika command tidak ditemukan
+    else:
+        print(f"Terjadi error: {error}")
+
 @bot.command(aliases=['p'])
 async def play(ctx, *, search: str):
     if not ctx.author.voice:
@@ -160,10 +169,11 @@ async def clear(ctx):
         return await ctx.send("Bot tidak sedang berada di voice channel.")
         
     vc: wavelink.Player = ctx.voice_client
-    if vc.queue.is_empty:
-        return await ctx.send("Antrean sudah kosong.")
-        
+    
+    # Hapus queue dan history (karena mode loop_all akan memanggil lagu dari history)
     vc.queue.clear()
+    vc.queue.history.clear()
+    
     await ctx.send("Semua antrean lagu telah dihapus 🗑️")
 
 @bot.command(aliases=['sp'])
@@ -179,9 +189,9 @@ async def switchplaylist(ctx, *, search: str):
     else:
         vc: wavelink.Player = ctx.voice_client
 
-    # Bersihkan antrean lama
-    if not vc.queue.is_empty:
-        vc.queue.clear()
+    # Bersihkan antrean lama dan riwayatnya
+    vc.queue.clear()
+    vc.queue.history.clear()
         
     # Cari lagu atau playlist
     tracks = await wavelink.Playable.search(search)
@@ -256,6 +266,41 @@ async def playpriority(ctx, *, search: str):
     if vc.playing:
         await vc.skip(force=True)
     else:
+        await vc.play(vc.queue.get())
+
+@bot.command(aliases=['pn'])
+async def playnext(ctx, *, search: str):
+    """Menambahkan lagu/playlist ke urutan paling depan antrean tanpa skip lagu saat ini"""
+    if not ctx.author.voice:
+        return await ctx.send("Masuk ke voice channel dulu ya!")
+
+    if not ctx.voice_client:
+        vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        vc.autoplay = wavelink.AutoPlayMode.partial
+        vc.queue.mode = wavelink.QueueMode.loop_all
+    else:
+        vc: wavelink.Player = ctx.voice_client
+
+    # Cari lagu atau playlist
+    tracks = await wavelink.Playable.search(search)
+    if not tracks:
+        return await ctx.send("Lagu/Playlist tidak ditemukan.")
+
+    if isinstance(tracks, wavelink.Playlist):
+        # JIKA PLAYLIST
+        playlist_tracks = list(tracks)
+        # Memasukkan dari urutan belakang agar playlist tersusun benar di awal antrean
+        for track in reversed(playlist_tracks):
+            vc.queue.put_at(0, track)
+        await ctx.send(f'➡️ Menambahkan playlist **{tracks.name}** ({len(playlist_tracks)} lagu) sebagai lagu selanjutnya.')
+    else:
+        # JIKA SINGLE TRACK
+        track = tracks[0]
+        vc.queue.put_at(0, track)
+        await ctx.send(f'➡️ Menambahkan lagu **{track.title}** sebagai lagu selanjutnya.')
+
+    # Jika bot tidak sedang memutar apapun, langsung mulai mainkan
+    if not vc.playing:
         await vc.play(vc.queue.get())
 
 # PENTING: Jangan berikan token ini ke publik!

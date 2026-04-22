@@ -41,7 +41,7 @@ plugins:
     # Jika bot masuk ke VC tapi lagu tetap tidak jalan (error 403), 
     # ubah false di bawah ini menjadi true, lalu cek terminal untuk link login.
     oauth:
-      enabled: false 
+      enabled: true 
 
 metrics:
   prometheus:
