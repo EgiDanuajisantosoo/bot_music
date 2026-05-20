@@ -1,0 +1,28 @@
+# Node / Next.js
+node_modules/
+web/node_modules/
+web/.next/
+.next/
+
+# Build outputs
+dist/
+build/
+
+# Python
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# Java archives and binaries
+*.jar
+*.dll
+*.exe
+
+# Misc
+.env
+.DS_Store
