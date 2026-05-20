@@ -26,3 +26,5 @@ logs/
 # Misc
 .env
 .DS_Store
+
+web/.env.local
