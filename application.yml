@@ -4,7 +4,7 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
   server:
     password: "youshallnotpass"
     sources:
@@ -26,7 +26,6 @@ lavalink:
     useSeekGhosting: true
     youtubePlaylistLoadLimit: 6
 
-# BAGIAN INI SANGAT PENTING (Wajib ada di paling bawah/luar)
 plugins:
   youtube:
     enabled: true
@@ -34,14 +33,20 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
-      - MUSIC
-      - ANDROID_VR
+      - MWEB
       - WEB
-      - TVHTML5EMBEDDED
-    # Jika bot masuk ke VC tapi lagu tetap tidak jalan (error 403), 
-    # ubah false di bawah ini menjadi true, lalu cek terminal untuk link login.
+      - MUSIC
+      - TVHTML5_SIMPLY
+      - TV
+      - ANDROID_VR
+    # VPS sering lebih stabil dengan client web/music dulu.
+    # TVHTML5_SIMPLY dipakai sebagai fallback yang masih didukung di rilis terbaru.
     oauth:
       enabled: true
+      refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN}"
+      skipInitialization: true
+    remoteCipher:
+      url: "https://cipher.kikkia.dev/"
 
 metrics:
   prometheus:

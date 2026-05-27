@@ -26,5 +26,12 @@ logs/
 # Misc
 .env
 .DS_Store
-
 web/.env.local
+
+# Sensitive debug/output files
+diff_output.txt
+diag_output.txt
+vps_search.txt
+Untitled-1.txt
+test_ssh_conn.py
+scratch.py

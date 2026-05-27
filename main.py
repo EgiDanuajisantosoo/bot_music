@@ -1,6 +1,20 @@
+import os
 import discord
 from discord.ext import commands
 import wavelink
+import logging
+import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configure logging to go to stdout immediately
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s %(levelname)s:%(name)s:%(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger('MusicBot')
 
 class MusicBot(commands.Bot):
     def __init__(self):
@@ -13,11 +27,26 @@ class MusicBot(commands.Bot):
         # Jika menggunakan Spotify, pastikan plugin LavaSrc sudah terpasang di Lavalink
         node = wavelink.Node(uri='http://127.0.0.1:2333', password='youshallnotpass')
         await wavelink.Pool.connect(nodes=[node], client=self)
+        logger.info("setup_hook: Wavelink Pool connect initiated")
+
+    async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
+        logger.info(f"Wavelink Node Ready: {payload.node!r} (Session ID: {payload.session_id})")
+
+    async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload):
+        logger.info(f"Wavelink Track Start: {payload.track.title} in guild {payload.player.guild.id}")
 
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
-        # Wavelink 3.0+ menangani pemutaran antrean otomatis melalui vc.autoplay
-        # Jadi kita tidak perlu memanggil player.play(next_track) secara manual.
-        pass
+        logger.info(f"Wavelink Track End: {payload.track.title} in guild {payload.player.guild.id} (Reason: {payload.reason})")
+
+    async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload):
+        logger.error(f"Wavelink Track Exception on track {payload.track.title}: {payload.exception}")
+
+    async def on_wavelink_websocket_closed(self, payload: wavelink.WebsocketClosedEventPayload):
+        logger.warning(f"Wavelink Websocket Closed: Code={payload.code}, Reason={payload.reason}")
+
+    async def on_command_error(self, ctx, error):
+        logger.error(f"Command error in {ctx.command}: {error}", exc_info=error)
+        await ctx.send(f"⚠️ Terjadi error saat menjalankan command: `{error}`")
 
 class QueuePagination(discord.ui.View):
     def __init__(self, queue_list, timeout=180):
@@ -258,5 +287,5 @@ async def playpriority(ctx, *, search: str):
     else:
         await vc.play(vc.queue.get())
 
-# PENTING: Jangan berikan token ini ke publik!
-bot.run('')
+# PENTING: Token dibaca dari file .env, jangan hardcode!
+bot.run(os.environ['DISCORD_BOT_TOKEN'])
