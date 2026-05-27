@@ -86,6 +86,8 @@ async function fetchLyrics(title, author, durationMs) {
             if (res.ok) data = await res.json();
         }
 
+        let isFallbackMatch = false;
+
         // 3. Jika masih gagal, gunakan fitur Search dari lrclib
         if (!data) {
             // Kita coba search dengan query gabungan judul dan artis
@@ -95,6 +97,18 @@ async function fetchLyrics(title, author, durationMs) {
                 if (searchResults && searchResults.length > 0) {
                     // Pilih hasil pertama yang memiliki lirik (utamakan lirik sinkron)
                     data = searchResults.find(t => t.syncedLyrics) || searchResults.find(t => t.plainLyrics) || searchResults[0];
+                }
+            }
+        }
+        
+        // 4. Opsi Terakhir: Cari HANYA dengan judul lagu (tanpa artis)
+        if (!data) {
+            res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle)}`);
+            if (res.ok) {
+                const searchResults = await res.json();
+                if (searchResults && searchResults.length > 0) {
+                    data = searchResults.find(t => t.syncedLyrics) || searchResults.find(t => t.plainLyrics) || searchResults[0];
+                    isFallbackMatch = true; // Tandai bahwa ini hasil tebakan yang mungkin kurang akurat
                 }
             }
         }
@@ -110,16 +124,23 @@ async function fetchLyrics(title, author, durationMs) {
         }
         
         // Render
+        let html = '';
+        if (isFallbackMatch) {
+            html += `<div style="color: #fbbf24; font-size: 0.9rem; margin-bottom: 2rem; font-weight: 600; line-height: 1.4;"><i class="fa-solid fa-triangle-exclamation"></i> Peringatan: Lirik ini mungkin kurang akurat (karena pencarian hanya menggunakan tebakan judul).</div>`;
+        }
+
         if (parsedLyrics.length === 1 && parsedLyrics[0].text.includes('<br>')) {
-            container.innerHTML = `<div class="lyric-line active">${parsedLyrics[0].text}</div>`;
+            html += `<div class="lyric-line active">${parsedLyrics[0].text}</div>`;
             parsedLyrics = []; // disable sync since it's plain
         } else if (parsedLyrics.length > 0) {
-            container.innerHTML = parsedLyrics.map((line, idx) => 
+            html += parsedLyrics.map((line, idx) => 
                 `<div class="lyric-line" id="lyric-${idx}">${line.text}</div>`
             ).join('');
         } else {
             throw new Error('Parsed lyrics empty');
         }
+        
+        container.innerHTML = html;
         
     } catch (err) {
         console.error(err);
