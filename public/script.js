@@ -101,13 +101,20 @@ async function fetchLyrics(title, author, durationMs) {
             }
         }
         
-        // 4. Opsi Terakhir: Cari HANYA dengan judul lagu (tanpa artis)
+        // 4. Opsi Terakhir: Cari HANYA dengan judul lagu, tapi filter berdasarkan durasi (toleransi 3 detik)
         if (!data) {
             res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle)}`);
             if (res.ok) {
                 const searchResults = await res.json();
                 if (searchResults && searchResults.length > 0) {
-                    data = searchResults.find(t => t.syncedLyrics) || searchResults.find(t => t.plainLyrics) || searchResults[0];
+                    // Cari yang durasinya mirip (toleransi 3 detik)
+                    const durationTolerance = 3;
+                    const matchedByDuration = searchResults.filter(t => t.duration && Math.abs(t.duration - durationSec) <= durationTolerance);
+                    
+                    // Jika ada yang durasinya pas, gunakan itu. Jika tidak, gunakan hasil pencarian awal.
+                    const listToSearch = matchedByDuration.length > 0 ? matchedByDuration : searchResults;
+
+                    data = listToSearch.find(t => t.syncedLyrics) || listToSearch.find(t => t.plainLyrics) || listToSearch[0];
                     isFallbackMatch = true; // Tandai bahwa ini hasil tebakan yang mungkin kurang akurat
                 }
             }
