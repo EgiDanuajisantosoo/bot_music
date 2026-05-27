@@ -260,8 +260,8 @@ nav li:hover, nav li.active {
     scroll-behavior: smooth;
     mask-image: linear-gradient(to bottom, transparent, black 5%, black 95%, transparent);
     -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
-    padding-top: 50%;
-    padding-bottom: 50%;
+    padding-top: 200px;
+    padding-bottom: 200px;
 }
 
 .lyrics-content::-webkit-scrollbar {

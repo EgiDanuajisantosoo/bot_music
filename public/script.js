@@ -128,7 +128,7 @@ function updateLyricsScroll(positionMs) {
             
             // Center the active line
             const container = document.getElementById('lyrics-content');
-            const scrollPos = activeLine.offsetTop - container.offsetTop - (container.clientHeight / 2) + (activeLine.clientHeight / 2);
+            const scrollPos = activeLine.offsetTop - (container.clientHeight / 2) + (activeLine.clientHeight / 2);
             container.scrollTo({ top: scrollPos, behavior: 'smooth' });
         }
     }

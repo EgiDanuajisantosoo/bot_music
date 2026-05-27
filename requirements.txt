@@ -3,3 +3,4 @@ wavelink==3.5.1
 PyNaCl
 aiohttp
 python-dotenv
+davey
