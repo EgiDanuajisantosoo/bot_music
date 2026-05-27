@@ -5,6 +5,9 @@ import wavelink
 import logging
 import sys
 from dotenv import load_dotenv
+from aiohttp import web, ClientSession
+from urllib.parse import quote
+import asyncio
 
 load_dotenv()
 
@@ -15,6 +18,27 @@ logging.basicConfig(
     stream=sys.stdout
 )
 logger = logging.getLogger('MusicBot')
+
+
+# --- CORS Middleware ---
+@web.middleware
+async def cors_middleware(request, handler):
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=204,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+            },
+        )
+
+    response = await handler(request)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
 
 class MusicBot(commands.Bot):
     def __init__(self):
@@ -28,6 +52,7 @@ class MusicBot(commands.Bot):
         node = wavelink.Node(uri='http://127.0.0.1:2333', password='youshallnotpass')
         await wavelink.Pool.connect(nodes=[node], client=self)
         logger.info("setup_hook: Wavelink Pool connect initiated")
+        bot.loop.create_task(start_web_server())
 
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
         logger.info(f"Wavelink Node Ready: {payload.node!r} (Session ID: {payload.session_id})")
@@ -82,6 +107,10 @@ class QueuePagination(discord.ui.View):
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 bot = MusicBot()
+
+# ============================================
+#  Discord Bot Commands
+# ============================================
 
 @bot.command(aliases=['p'])
 async def play(ctx, *, search: str):
@@ -286,6 +315,232 @@ async def playpriority(ctx, *, search: str):
         await vc.skip(force=True)
     else:
         await vc.play(vc.queue.get())
+
+
+# ============================================
+#  Web API Backend (aiohttp)
+# ============================================
+app = web.Application(middlewares=[cors_middleware])
+
+
+def get_player():
+    if not bot.voice_clients:
+        return None
+    return bot.voice_clients[0]
+
+
+async def api_status(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"status": "disconnected", "queue_length": 0})
+    
+    current = vc.current
+    if not current:
+        return web.json_response({"status": "idle"})
+        
+    return web.json_response({
+        "status": "playing" if vc.playing else "paused",
+        "track": {
+            "title": current.title,
+            "author": current.author,
+            "uri": current.uri,
+            "length": current.length,
+            "position": vc.position,
+            "artwork": current.artwork
+        },
+        "queue_length": len(vc.queue)
+    })
+
+
+async def api_queue(request):
+    vc = get_player()
+    if not vc or vc.queue.is_empty:
+        return web.json_response({"queue": []})
+        
+    queue_data = []
+    for i, track in enumerate(vc.queue):
+        queue_data.append({
+            "index": i,
+            "title": track.title,
+            "author": track.author,
+            "length": track.length
+        })
+    return web.json_response({"queue": queue_data})
+
+
+async def api_play(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"success": False, "error": "Bot not in voice channel"}, status=400)
+
+    try:
+        data = await request.json()
+        search = data.get("query")
+        if not search:
+            return web.json_response({"success": False, "error": "Empty query"}, status=400)
+
+        tracks = await wavelink.Playable.search(search)
+        if not tracks:
+            return web.json_response({"success": False, "error": "Not found"}, status=404)
+
+        if isinstance(tracks, wavelink.Playlist):
+            added = await vc.queue.put_wait(tracks)
+            message = f"Playlist '{tracks.name}' ditambahkan ({added} lagu)."
+        else:
+            track = tracks[0]
+            await vc.queue.put_wait(track)
+            message = f"Lagu '{track.title}' ditambahkan."
+
+        if not vc.playing:
+            await vc.play(vc.queue.get())
+
+        return web.json_response({"success": True, "message": message})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def api_playnext(request):
+    """Add a song/playlist to the front of the queue (plays right after current track)."""
+    vc = get_player()
+    if not vc:
+        return web.json_response({"success": False, "error": "Bot not in voice channel"}, status=400)
+
+    try:
+        data = await request.json()
+        search = data.get("query")
+        if not search:
+            return web.json_response({"success": False, "error": "Empty query"}, status=400)
+
+        tracks = await wavelink.Playable.search(search)
+        if not tracks:
+            return web.json_response({"success": False, "error": "Not found"}, status=404)
+
+        if isinstance(tracks, wavelink.Playlist):
+            playlist_tracks = list(tracks)
+            for track in reversed(playlist_tracks):
+                vc.queue.put_at(0, track)
+            message = f"Playlist '{tracks.name}' ({len(playlist_tracks)} lagu) ditambahkan ke urutan berikutnya."
+        else:
+            track = tracks[0]
+            vc.queue.put_at(0, track)
+            message = f"Lagu '{track.title}' ditambahkan ke urutan berikutnya."
+
+        if not vc.playing:
+            await vc.play(vc.queue.get())
+
+        return web.json_response({"success": True, "message": message})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def api_skip(request):
+    vc = get_player()
+    if vc and vc.playing:
+        await vc.skip(force=True)
+        return web.json_response({"success": True, "message": "Lagu dilewati."})
+    return web.json_response({"success": False, "error": "Not playing"}, status=400)
+
+
+async def api_remove(request):
+    vc = get_player()
+    if not vc or vc.queue.is_empty:
+        return web.json_response({"success": False, "error": "Queue kosong"}, status=400)
+
+    try:
+        data = await request.json()
+        index = data.get("index")
+        
+        if index is None or not isinstance(index, int):
+            return web.json_response({"success": False, "error": "Invalid index"}, status=400)
+        
+        if index < 0 or index >= len(vc.queue):
+            return web.json_response({"success": False, "error": "Index out of range"}, status=400)
+        
+        removed_track = vc.queue[index]
+        del vc.queue[index]
+        
+        return web.json_response({
+            "success": True,
+            "message": f"Lagu '{removed_track.title}' dihapus dari antrean."
+        })
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def api_clear(request):
+    vc = get_player()
+    if vc:
+        vc.queue.clear()
+        vc.queue.history.clear()
+        return web.json_response({"success": True, "message": "Antrean dibersihkan."})
+    return web.json_response({"success": False, "error": "Bot not in voice channel"}, status=400)
+
+
+async def api_move(request):
+    """Move a track inside the queue from one index to another.
+    Expects JSON: {"from": int, "to": int}
+    """
+    vc = get_player()
+    if not vc or vc.queue.is_empty:
+        return web.json_response({"success": False, "error": "Queue kosong"}, status=400)
+
+    try:
+        data = await request.json()
+        frm = data.get('from')
+        to = data.get('to')
+
+        if not isinstance(frm, int) or not isinstance(to, int):
+            return web.json_response({"success": False, "error": "Invalid indices"}, status=400)
+
+        items = list(vc.queue)
+        n = len(items)
+        if frm < 0 or frm >= n or to < 0 or to >= n:
+            return web.json_response({"success": False, "error": "Index out of range"}, status=400)
+
+        # perform move in a plain list
+        item = items.pop(frm)
+        items.insert(to, item)
+
+        # rebuild the queue: clear and re-add items preserving order
+        vc.queue.clear()
+        for track in items:
+            await vc.queue.put_wait(track)
+
+        return web.json_response({"success": True, "message": "Antrean diperbarui."})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# --- Static file serving ---
+public_dir = os.path.join(os.path.dirname(__file__), 'public')
+if not os.path.exists(public_dir):
+    os.makedirs(public_dir)
+
+
+async def index_handler(request):
+    return web.FileResponse(os.path.join(public_dir, 'index.html'))
+
+
+# Register API routes
+app.router.add_get('/api/status', api_status)
+app.router.add_get('/api/queue', api_queue)
+app.router.add_post('/api/play', api_play)
+app.router.add_post('/api/skip', api_skip)
+app.router.add_post('/api/clear', api_clear)
+app.router.add_post('/api/remove', api_remove)
+app.router.add_post('/api/move', api_move)
+app.router.add_post('/api/playnext', api_playnext)
+app.router.add_get('/', index_handler)
+app.router.add_static('/', public_dir)
+
+
+async def start_web_server():
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8081)
+    await site.start()
+    print("Web Dashboard berjalan di http://localhost:8081")
+
 
 # PENTING: Token dibaca dari file .env, jangan hardcode!
 bot.run(os.environ['DISCORD_BOT_TOKEN'])

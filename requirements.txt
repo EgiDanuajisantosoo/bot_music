@@ -1,4 +1,5 @@
 discord.py==2.7.1
 wavelink==3.5.1
 PyNaCl
-davey
+aiohttp
+python-dotenv
