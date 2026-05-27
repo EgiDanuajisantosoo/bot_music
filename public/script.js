@@ -64,26 +64,49 @@ async function fetchLyrics(title, author, durationMs) {
     
     try {
         const durationSec = Math.round(durationMs / 1000);
-        let url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(author)}&duration=${durationSec}`;
         
-        let res = await fetch(url);
-        
-        // Fallback search if exact match fails
-        if (!res.ok) {
-            url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(author)}`;
-            res = await fetch(url);
+        // Bersihkan judul dari embel-embel YouTube seperti (Official Video), (Lyric), dsb.
+        let cleanTitle = title.replace(/\s*[\(\[].*?(official|music|lyric|video|audio|visualizer).*?[\)\]]\s*/gi, '').trim();
+        // Hapus nama artis dari judul jika ada format "Artis - Judul"
+        const authorLower = author.toLowerCase();
+        if (cleanTitle.toLowerCase().includes(authorLower + ' - ')) {
+            const splitIdx = cleanTitle.toLowerCase().indexOf(authorLower + ' - ');
+            cleanTitle = cleanTitle.substring(splitIdx + authorLower.length + 3).trim();
         }
+
+        let data = null;
+
+        // 1. Coba exact match dengan durasi
+        let res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(author)}&duration=${durationSec}`);
+        if (res.ok) data = await res.json();
         
-        if (!res.ok) throw new Error('Lyrics not found');
-        
-        const data = await res.json();
+        // 2. Coba exact match tanpa durasi
+        if (!data) {
+            res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(author)}`);
+            if (res.ok) data = await res.json();
+        }
+
+        // 3. Jika masih gagal, gunakan fitur Search dari lrclib
+        if (!data) {
+            // Kita coba search dengan query gabungan judul dan artis
+            res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle + ' ' + author)}`);
+            if (res.ok) {
+                const searchResults = await res.json();
+                if (searchResults && searchResults.length > 0) {
+                    // Pilih hasil pertama yang memiliki lirik (utamakan lirik sinkron)
+                    data = searchResults.find(t => t.syncedLyrics) || searchResults.find(t => t.plainLyrics) || searchResults[0];
+                }
+            }
+        }
+
+        if (!data || (!data.syncedLyrics && !data.plainLyrics)) {
+            throw new Error('Lyrics not found');
+        }
         
         if (data.syncedLyrics) {
             parsedLyrics = parseLRC(data.syncedLyrics);
         } else if (data.plainLyrics) {
             parsedLyrics = [{ time: 0, text: data.plainLyrics.replace(/\n/g, '<br>') }];
-        } else {
-            throw new Error('No lyrics format found');
         }
         
         // Render
