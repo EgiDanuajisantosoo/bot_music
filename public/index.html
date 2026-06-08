@@ -22,7 +22,7 @@
                 <ul>
                     <li id="nav-dashboard" class="active"><i class="fa-solid fa-house"></i> Dashboard</li>
                     <li id="nav-playlists"><i class="fa-solid fa-list"></i> Playlists</li>
-                    <li onclick="alert('Ini akan mengarahkan ke halaman pengaturan bot!')"><i class="fa-solid fa-gear"></i> Settings</li>
+                    <li id="nav-settings"><i class="fa-solid fa-gear"></i> Settings</li>
                 </ul>
             </nav>
         </aside>
@@ -40,7 +40,7 @@
                 <section class="player-container">
                     <div class="player-card glass-panel" id="player-card">
                         <div class="artwork-container">
-                            <img id="track-artwork" src="https://via.placeholder.com/200" alt="Album Art">
+                            <img id="track-artwork" src="data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22250%22%20height%3D%22250%22%20viewBox%3D%220%200%20250%20250%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20style%3D%22stop-color%3A%236c5ced%3Bstop-opacity%3A1%22%20%2F%3E%3Cstop%20offset%3D%22100%25%22%20style%3D%22stop-color%3A%231a1a2e%3Bstop-opacity%3A1%22%20%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22250%22%20height%3D%22250%22%20fill%3D%22url(%23grad)%22%20rx%3D%2216%22%2F%3E%3Cpath%20d%3D%22M115%2C85%20L115%2C155%20A%2020%2020%200%201%200%20135%20175%20L135%2C110%20L165%2C110%20L165%2C85%20Z%22%20fill%3D%22rgba(255%2C255%2C255%2C0.3)%22%2F%3E%3C%2Fsvg%3E" alt="Album Art">
                         </div>
                         <div class="track-info">
                             <h2 id="track-title">Nothing playing right now</h2>
@@ -121,6 +121,32 @@
                     <ul class="queue-list" id="playlist-tracks-list">
                         <div class="empty-state">Loading tracks...</div>
                     </ul>
+                </section>
+            </div>
+
+            <div id="view-settings" style="display: none;">
+                <section class="glass-panel" style="padding: 2rem; border-radius: 24px;">
+                    <h3 style="margin-bottom: 1.5rem; color: var(--primary-color);"><i class="fa-solid fa-gear"></i> Bot Settings</h3>
+                    
+                    <div class="setting-group" style="margin-bottom: 2rem;">
+                        <h4 style="margin-bottom: 1rem; color: var(--text-main);"><i class="fa-solid fa-sliders"></i> Audio Filters</h4>
+                        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Ubah efek suara musik secara real-time. Efek bisa dipadukan atau dikembalikan ke Normal.</p>
+                        <div class="filter-buttons" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button class="filter-btn active" data-filter="normal">Normal</button>
+                            <button class="filter-btn" data-filter="bassboost">Bassboost</button>
+                            <button class="filter-btn" data-filter="nightcore">Nightcore</button>
+                            <button class="filter-btn" data-filter="vaporwave">Vaporwave</button>
+                        </div>
+                    </div>
+                    <div class="setting-group" style="margin-bottom: 2rem;">
+                        <h4 style="margin-bottom: 1rem; color: var(--text-main);"><i class="fa-solid fa-microchip"></i> Engine Performance Mode</h4>
+                        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Atur kualitas audio dan tingkat buffering untuk mengurangi lag pada VPS. <strong>Peringatan:</strong> Mengganti mode ini akan me-restart engine audio dan menghentikan lagu sesaat (± 5 detik).</p>
+                        <div class="engine-buttons" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button class="engine-btn" data-mode="performance"><i class="fa-solid fa-gauge-high"></i> Performance (Anti-Lag)</button>
+                            <button class="engine-btn active" data-mode="balanced"><i class="fa-solid fa-scale-balanced"></i> Balanced</button>
+                            <button class="engine-btn" data-mode="quality"><i class="fa-solid fa-gem"></i> High Quality</button>
+                        </div>
+                    </div>
                 </section>
             </div>
         </main>

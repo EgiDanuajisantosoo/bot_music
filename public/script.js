@@ -218,6 +218,7 @@ const updateStatus = async () => {
         // Update player
         statusDot.classList.add('active');
         statusText.innerText = 'Playing';
+        document.getElementById('player-card').classList.remove('idle');
 
         document.getElementById('track-title').innerText = data.track.title;
         document.getElementById('track-author').innerText = data.track.author;
@@ -540,10 +541,11 @@ async function handleDrop(e) {
 const resetPlayer = () => {
     document.getElementById('track-title').innerText = 'Nothing playing right now';
     document.getElementById('track-author').innerText = 'Play some music to get started!';
-    document.getElementById('track-artwork').src = 'https://via.placeholder.com/200?text=Music';
+    document.getElementById('track-artwork').src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22250%22%20height%3D%22250%22%20viewBox%3D%220%200%20250%20250%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20style%3D%22stop-color%3A%236c5ced%3Bstop-opacity%3A1%22%20%2F%3E%3Cstop%20offset%3D%22100%25%22%20style%3D%22stop-color%3A%231a1a2e%3Bstop-opacity%3A1%22%20%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22250%22%20height%3D%22250%22%20fill%3D%22url(%23grad)%22%20rx%3D%2216%22%2F%3E%3Cpath%20d%3D%22M115%2C85%20L115%2C155%20A%2020%2020%200%201%200%20135%20175%20L135%2C110%20L165%2C110%20L165%2C85%20Z%22%20fill%3D%22rgba(255%2C255%2C255%2C0.3)%22%2F%3E%3C%2Fsvg%3E';
     document.getElementById('time-current').innerText = '0:00';
     document.getElementById('time-total').innerText = '0:00';
     document.getElementById('progress-fill').style.width = '0%';
+    document.getElementById('player-card').classList.add('idle');
     
     // Reset lyrics
     currentLyricsTrack = null;
@@ -563,6 +565,58 @@ document.getElementById('btn-clear').addEventListener('click', async () => {
         await fetch('/api/clear', { method: 'POST' });
         updateQueue();
     }
+});
+
+// Filters
+document.querySelectorAll('.filter-btn:not(.engine-btn)').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+        const filter = e.target.dataset.filter;
+        
+        // Update UI Active State
+        document.querySelectorAll('.filter-btn:not(.engine-btn)').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        
+        // Disable temporarily
+        document.querySelectorAll('.filter-btn:not(.engine-btn)').forEach(b => b.style.pointerEvents = 'none');
+        
+        try {
+            await fetch('/api/filters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filter })
+            });
+            showToast(`Filter applied: ${filter}`, 'success');
+        } catch (err) {
+            showToast('Failed to apply filter', 'error');
+        } finally {
+            document.querySelectorAll('.filter-btn:not(.engine-btn)').forEach(b => b.style.pointerEvents = 'auto');
+        }
+    });
+});
+
+// Engine Mode
+document.querySelectorAll('.engine-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+        const mode = e.currentTarget.dataset.mode;
+        
+        if(!confirm(`Menerapkan mode ${mode} akan merestart engine audio. Lagu yang sedang diputar akan terhenti sekitar 5-10 detik. Lanjutkan?`)) return;
+        
+        // Update UI Active State
+        document.querySelectorAll('.engine-btn').forEach(b => b.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        
+        showToast(`Menerapkan mode ${mode}... Audio Engine merestart!`, 'success');
+        
+        try {
+            await fetch('/api/engine_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            });
+        } catch (err) {
+            console.error(err);
+        }
+    });
 });
 
 document.getElementById('btn-play').addEventListener('click', async () => {
@@ -654,26 +708,40 @@ updateQueue();
 // Navigation
 const navDashboard = document.getElementById('nav-dashboard');
 const navPlaylists = document.getElementById('nav-playlists');
+const navSettings = document.getElementById('nav-settings');
 const viewDashboard = document.getElementById('view-dashboard');
 const viewPlaylists = document.getElementById('view-playlists');
+const viewSettings = document.getElementById('view-settings');
 const pageTitle = document.getElementById('page-title');
 
-navDashboard.addEventListener('click', () => {
-    navDashboard.classList.add('active');
-    navPlaylists.classList.remove('active');
-    viewDashboard.style.display = 'block';
-    viewPlaylists.style.display = 'none';
-    pageTitle.innerText = 'Now Playing';
-});
-
-navPlaylists.addEventListener('click', () => {
-    navPlaylists.classList.add('active');
+function switchView(viewName) {
     navDashboard.classList.remove('active');
+    navPlaylists.classList.remove('active');
+    navSettings.classList.remove('active');
+    
     viewDashboard.style.display = 'none';
-    viewPlaylists.style.display = 'block';
-    pageTitle.innerText = 'Playlists';
-    loadPlaylists();
-});
+    viewPlaylists.style.display = 'none';
+    viewSettings.style.display = 'none';
+    
+    if (viewName === 'dashboard') {
+        navDashboard.classList.add('active');
+        viewDashboard.style.display = 'block';
+        pageTitle.innerText = 'Now Playing';
+    } else if (viewName === 'playlists') {
+        navPlaylists.classList.add('active');
+        viewPlaylists.style.display = 'block';
+        pageTitle.innerText = 'Playlists';
+        loadPlaylists();
+    } else if (viewName === 'settings') {
+        navSettings.classList.add('active');
+        viewSettings.style.display = 'block';
+        pageTitle.innerText = 'Settings';
+    }
+}
+
+navDashboard.addEventListener('click', () => switchView('dashboard'));
+navPlaylists.addEventListener('click', () => switchView('playlists'));
+navSettings.addEventListener('click', () => switchView('settings'));
 
 // Load all playlists
 async function loadPlaylists() {

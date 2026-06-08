@@ -9,6 +9,7 @@ from aiohttp import web, ClientSession
 from urllib.parse import quote
 import asyncio
 import aiosqlite
+import re
 
 load_dotenv()
 
@@ -416,6 +417,33 @@ async def clear(ctx):
     vc.queue.clear()
     vc.active_playlist_id = None
     await ctx.send("Semua antrean lagu telah dihapus 🗑️")
+
+@bot.command(aliases=['f', 'eq'])
+async def filter(ctx, preset: str = "normal"):
+    """Mengatur filter audio (bassboost, nightcore, vaporwave, normal)"""
+    if not ctx.voice_client:
+        return await ctx.send("Bot tidak sedang berada di voice channel.")
+        
+    vc: wavelink.Player = ctx.voice_client
+    preset = preset.lower()
+    filters: wavelink.Filters = vc.filters
+    filters.reset()
+    
+    if preset == "bassboost":
+        filters.equalizer.set(payload=[{"band": 0, "gain": 0.25}, {"band": 1, "gain": 0.15}, {"band": 2, "gain": 0.1}])
+        await ctx.send("🎛️ Filter diubah ke **Bassboost**")
+    elif preset == "nightcore":
+        filters.timescale.set(speed=1.2, pitch=1.2, rate=1.0)
+        await ctx.send("🎛️ Filter diubah ke **Nightcore**")
+    elif preset == "vaporwave":
+        filters.timescale.set(speed=0.8, pitch=0.8, rate=1.0)
+        await ctx.send("🎛️ Filter diubah ke **Vaporwave**")
+    elif preset in ["reset", "normal", "off"]:
+        await ctx.send("🎛️ Filter di-reset ke **Normal**")
+    else:
+        return await ctx.send("Pilihan filter tidak valid! Gunakan: `bassboost`, `nightcore`, `vaporwave`, atau `normal`")
+        
+    await vc.set_filters(filters)
 
 @bot.command(aliases=['sp'])
 async def switchplaylist(ctx, *, search: str):
@@ -851,6 +879,76 @@ async def api_playlist_play(request):
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def api_filters(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"success": False, "error": "Bot not in voice channel"}, status=400)
+    
+    try:
+        data = await request.json()
+        preset = data.get("filter")
+        if not preset:
+            return web.json_response({"success": False, "error": "Missing filter preset"}, status=400)
+            
+        filters: wavelink.Filters = vc.filters
+        filters.reset()
+        
+        if preset == "bassboost":
+            filters.equalizer.set(payload=[{"band": 0, "gain": 0.25}, {"band": 1, "gain": 0.15}, {"band": 2, "gain": 0.1}])
+        elif preset == "nightcore":
+            filters.timescale.set(speed=1.2, pitch=1.2, rate=1.0)
+        elif preset == "vaporwave":
+            filters.timescale.set(speed=0.8, pitch=0.8, rate=1.0)
+        elif preset == "reset" or preset == "normal":
+            pass # already reset
+        else:
+            return web.json_response({"success": False, "error": "Invalid filter"}, status=400)
+            
+        await vc.set_filters(filters)
+        return web.json_response({"success": True, "message": f"Filter '{preset}' diterapkan."})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def api_engine_mode(request):
+    try:
+        data = await request.json()
+        mode = data.get("mode")
+        if not mode or mode not in ["performance", "balanced", "quality"]:
+            return web.json_response({"success": False, "error": "Invalid mode"}, status=400)
+            
+        yml_path = 'application.yml'
+        if not os.path.exists(yml_path):
+            return web.json_response({"success": False, "error": "application.yml not found"}, status=500)
+            
+        with open(yml_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        if mode == "performance":
+            content = re.sub(r'opusEncodingQuality:\s*\d+', 'opusEncodingQuality: 3', content)
+            content = re.sub(r'resamplingQuality:\s*\w+', 'resamplingQuality: LOW', content)
+            content = re.sub(r'bufferDurationMs:\s*\d+', 'bufferDurationMs: 200', content)
+            content = re.sub(r'frameBufferDurationMs:\s*\d+', 'frameBufferDurationMs: 1000', content)
+        elif mode == "balanced":
+            content = re.sub(r'opusEncodingQuality:\s*\d+', 'opusEncodingQuality: 7', content)
+            content = re.sub(r'resamplingQuality:\s*\w+', 'resamplingQuality: MEDIUM', content)
+            content = re.sub(r'bufferDurationMs:\s*\d+', 'bufferDurationMs: 400', content)
+            content = re.sub(r'frameBufferDurationMs:\s*\d+', 'frameBufferDurationMs: 5000', content)
+        elif mode == "quality":
+            content = re.sub(r'opusEncodingQuality:\s*\d+', 'opusEncodingQuality: 10', content)
+            content = re.sub(r'resamplingQuality:\s*\w+', 'resamplingQuality: HIGH', content)
+            content = re.sub(r'bufferDurationMs:\s*\d+', 'bufferDurationMs: 1000', content)
+            content = re.sub(r'frameBufferDurationMs:\s*\d+', 'frameBufferDurationMs: 10000', content)
+            
+        with open(yml_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+            
+        # Restart lavalink in background
+        os.system("pkill -f Lavalink.jar && cd /home/ubuntu/bot-musik && nohup java -jar Lavalink.jar > logs/lavalink.log 2>&1 &")
+        
+        return web.json_response({"success": True, "message": f"Engine mode set to {mode}. Lavalink is restarting."})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 
 # --- Static file serving ---
 public_dir = os.path.join(os.path.dirname(__file__), 'public')
@@ -878,6 +976,8 @@ app.router.add_post('/api/playlists/add', api_playlist_add)
 app.router.add_post('/api/playlists/remove', api_playlist_remove)
 app.router.add_post('/api/playlists/delete', api_playlist_delete)
 app.router.add_post('/api/playlists/play', api_playlist_play)
+app.router.add_post('/api/filters', api_filters)
+app.router.add_post('/api/engine_mode', api_engine_mode)
 app.router.add_get('/', index_handler)
 app.router.add_static('/', public_dir)
 
