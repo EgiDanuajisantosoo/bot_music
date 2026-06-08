@@ -73,16 +73,21 @@ async function fetchLyrics(title, author, durationMs) {
             const splitIdx = cleanTitle.toLowerCase().indexOf(authorLower + ' - ');
             cleanTitle = cleanTitle.substring(splitIdx + authorLower.length + 3).trim();
         }
+        // Bersihkan nama artis (hapus bagian setelah tanda "-")
+        let cleanAuthor = author;
+        if (cleanAuthor.includes('-')) {
+            cleanAuthor = cleanAuthor.split('-')[0].trim();
+        }
 
         let data = null;
 
         // 1. Coba exact match dengan durasi
-        let res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(author)}&duration=${durationSec}`);
+        let res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanAuthor)}&duration=${durationSec}`);
         if (res.ok) data = await res.json();
         
         // 2. Coba exact match tanpa durasi
         if (!data) {
-            res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(author)}`);
+            res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanAuthor)}`);
             if (res.ok) data = await res.json();
         }
 
@@ -91,7 +96,7 @@ async function fetchLyrics(title, author, durationMs) {
         // 3. Jika masih gagal, gunakan fitur Search dari lrclib
         if (!data) {
             // Kita coba search dengan query gabungan judul dan artis
-            res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle + ' ' + author)}`);
+            res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle + ' ' + cleanAuthor)}`);
             if (res.ok) {
                 const searchResults = await res.json();
                 if (searchResults && searchResults.length > 0) {
@@ -641,3 +646,250 @@ setInterval(updateQueue, 2000);
 // Initial fetch
 updateStatus();
 updateQueue();
+
+// ========================
+//  Playlists Integration
+// ========================
+
+// Navigation
+const navDashboard = document.getElementById('nav-dashboard');
+const navPlaylists = document.getElementById('nav-playlists');
+const viewDashboard = document.getElementById('view-dashboard');
+const viewPlaylists = document.getElementById('view-playlists');
+const pageTitle = document.getElementById('page-title');
+
+navDashboard.addEventListener('click', () => {
+    navDashboard.classList.add('active');
+    navPlaylists.classList.remove('active');
+    viewDashboard.style.display = 'block';
+    viewPlaylists.style.display = 'none';
+    pageTitle.innerText = 'Now Playing';
+});
+
+navPlaylists.addEventListener('click', () => {
+    navPlaylists.classList.add('active');
+    navDashboard.classList.remove('active');
+    viewDashboard.style.display = 'none';
+    viewPlaylists.style.display = 'block';
+    pageTitle.innerText = 'Playlists';
+    loadPlaylists();
+});
+
+// Load all playlists
+async function loadPlaylists() {
+    document.getElementById('playlists-main').style.display = 'flex';
+    document.getElementById('playlist-details').style.display = 'none';
+    
+    const grid = document.getElementById('playlists-grid');
+    grid.innerHTML = '<div class="empty-state">Loading playlists... <i class="fa-solid fa-spinner fa-spin"></i></div>';
+    
+    try {
+        const res = await fetch('/api/playlists');
+        const data = await res.json();
+        
+        if (!data.playlists || data.playlists.length === 0) {
+            grid.innerHTML = '<div class="empty-state">No playlists found. Create one!</div>';
+            return;
+        }
+        
+        grid.innerHTML = data.playlists.map(p => `
+            <div class="playlist-card glass-panel" onclick="openPlaylist(${p.id}, '${p.name.replace(/'/g, "\\'")}')">
+                <i class="fa-solid fa-list-music playlist-icon"></i>
+                <h3>${p.name}</h3>
+                <p>Created by: ${p.user_id === 'WebUser' ? 'Web' : p.user_id}</p>
+            </div>
+        `).join('');
+    } catch (err) {
+        grid.innerHTML = '<div class="empty-state">Failed to load playlists.</div>';
+    }
+}
+
+// Create Playlist
+document.getElementById('btn-create-playlist').addEventListener('click', async () => {
+    const name = prompt('Enter new playlist name:');
+    if (!name) return;
+    
+    try {
+        const res = await fetch('/api/playlists/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const result = await res.json();
+        if (result.success) {
+            showToast('Playlist created!', 'success');
+            loadPlaylists();
+        } else {
+            showToast(result.error || 'Failed to create playlist', 'error');
+        }
+    } catch (err) {
+        showToast('Connection error', 'error');
+    }
+});
+
+// Playlist Details State
+let currentPlaylistId = null;
+
+// Open Playlist Details
+async function openPlaylist(id, name) {
+    currentPlaylistId = id;
+    document.getElementById('playlists-main').style.display = 'none';
+    document.getElementById('playlist-details').style.display = 'flex';
+    document.getElementById('playlist-details-title').innerText = name;
+    
+    await loadPlaylistTracks(id);
+}
+
+// Back to Playlists List
+document.getElementById('btn-back-playlists').addEventListener('click', () => {
+    document.getElementById('playlists-main').style.display = 'flex';
+    document.getElementById('playlist-details').style.display = 'none';
+    currentPlaylistId = null;
+    loadPlaylists();
+});
+
+// Load Playlist Tracks
+async function loadPlaylistTracks(id) {
+    const list = document.getElementById('playlist-tracks-list');
+    list.innerHTML = '<div class="empty-state">Loading tracks... <i class="fa-solid fa-spinner fa-spin"></i></div>';
+    
+    try {
+        const res = await fetch(`/api/playlists/${id}`);
+        const data = await res.json();
+        
+        if (!data.tracks || data.tracks.length === 0) {
+            list.innerHTML = '<div class="empty-state">Playlist is empty. Add some songs!</div>';
+            return;
+        }
+        
+        list.innerHTML = data.tracks.map((t, idx) => `
+            <li class="queue-item">
+                <div class="queue-item-left">
+                    <div class="queue-index">${idx + 1}</div>
+                    <div class="queue-item-info">
+                        <h4>${t.title}</h4>
+                        <p>${t.query}</p>
+                    </div>
+                </div>
+                <button class="btn-remove" onclick="removePlaylistTrack(${t.id})" title="Remove">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </li>
+        `).join('');
+    } catch (err) {
+        list.innerHTML = '<div class="empty-state">Failed to load tracks.</div>';
+    }
+}
+
+// Add Track to Playlist
+document.getElementById('btn-playlist-add').addEventListener('click', async () => {
+    if (!currentPlaylistId) return;
+    
+    const input = document.getElementById('playlist-search-input');
+    const query = input.value.trim();
+    if (!query) return;
+    
+    const btn = document.getElementById('btn-playlist-add');
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    
+    try {
+        const res = await fetch('/api/playlists/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlist_id: currentPlaylistId, query: query, title: query })
+        });
+        const result = await res.json();
+        
+        if (result.success) {
+            showToast('Added to playlist!', 'success');
+            input.value = '';
+            loadPlaylistTracks(currentPlaylistId);
+        } else {
+            showToast(result.error || 'Failed to add', 'error');
+        }
+    } catch (err) {
+        showToast('Connection error', 'error');
+    } finally {
+        btn.innerHTML = '<i class="fa-solid fa-plus"></i> Add to Playlist';
+        btn.disabled = false;
+    }
+});
+
+// Play Playlist
+document.getElementById('btn-play-playlist').addEventListener('click', async () => {
+    if (!currentPlaylistId) return;
+    
+    const btn = document.getElementById('btn-play-playlist');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    
+    try {
+        const res = await fetch('/api/playlists/play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlist_id: currentPlaylistId })
+        });
+        const result = await res.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            // Switch to dashboard view
+            navDashboard.click();
+        } else {
+            showToast(result.error || 'Failed to play playlist', 'error');
+        }
+    } catch (err) {
+        showToast('Connection error', 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+});
+
+// Remove Track from Playlist
+window.removePlaylistTrack = async (trackId) => {
+    if (!confirm('Remove this track from the playlist?')) return;
+    
+    try {
+        const res = await fetch('/api/playlists/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ track_id: trackId })
+        });
+        const result = await res.json();
+        if (result.success) {
+            showToast('Track removed', 'success');
+            loadPlaylistTracks(currentPlaylistId);
+        } else {
+            showToast('Failed to remove track', 'error');
+        }
+    } catch (err) {
+        showToast('Connection error', 'error');
+    }
+};
+
+// Delete Playlist
+document.getElementById('btn-delete-playlist').addEventListener('click', async () => {
+    if (!currentPlaylistId) return;
+    if (!confirm('Are you sure you want to delete this playlist entirely? This action cannot be undone.')) return;
+    
+    try {
+        const res = await fetch('/api/playlists/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playlist_id: currentPlaylistId })
+        });
+        const result = await res.json();
+        if (result.success) {
+            showToast('Playlist deleted', 'success');
+            document.getElementById('btn-back-playlists').click();
+        } else {
+            showToast('Failed to delete playlist', 'error');
+        }
+    } catch (err) {
+        showToast('Connection error', 'error');
+    }
+});
+

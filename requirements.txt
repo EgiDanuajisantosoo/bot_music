@@ -4,3 +4,4 @@ PyNaCl
 aiohttp
 python-dotenv
 davey
+aiosqlite

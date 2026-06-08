@@ -24,7 +24,7 @@ lavalink:
     resamplingQuality: LOW
     trackStuckThresholdMs: 10000
     useSeekGhosting: true
-    youtubePlaylistLoadLimit: 6
+    youtubePlaylistLoadLimit: 50
 
 plugins:
   youtube:

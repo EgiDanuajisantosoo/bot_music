@@ -10,8 +10,10 @@ def upload_files():
         
         # Files to upload
         files = [
+            ('main.py', '/home/ubuntu/bot-musik/main.py'),
             ('requirements.txt', '/home/ubuntu/bot-musik/requirements.txt'),
             ('.env', '/home/ubuntu/bot-musik/.env'),
+            ('public/index.html', '/home/ubuntu/bot-musik/public/index.html'),
             ('public/style.css', '/home/ubuntu/bot-musik/public/style.css'),
             ('public/script.js', '/home/ubuntu/bot-musik/public/script.js')
         ]

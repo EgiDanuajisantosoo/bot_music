@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from aiohttp import web, ClientSession
 from urllib.parse import quote
 import asyncio
+import aiosqlite
 
 load_dotenv()
 
@@ -39,6 +40,27 @@ async def cors_middleware(request, handler):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
+# --- Database Initialization ---
+async def init_db():
+    async with aiosqlite.connect('bot_database.db') as db:
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS playlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL
+            )
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS playlist_tracks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_id INTEGER,
+                track_query TEXT NOT NULL,
+                track_title TEXT NOT NULL,
+                FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+            )
+        ''')
+        await db.commit()
+
 
 class MusicBot(commands.Bot):
     def __init__(self):
@@ -52,6 +74,10 @@ class MusicBot(commands.Bot):
         node = wavelink.Node(uri='http://127.0.0.1:2333', password='youshallnotpass')
         await wavelink.Pool.connect(nodes=[node], client=self)
         logger.info("setup_hook: Wavelink Pool connect initiated")
+        
+        await init_db()
+        await bot.add_cog(PlaylistCommands())
+        
         bot.loop.create_task(start_web_server())
 
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
@@ -65,6 +91,15 @@ class MusicBot(commands.Bot):
 
     async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload):
         logger.error(f"Wavelink Track Exception on track {payload.track.title}: {payload.exception}")
+        if payload.player:
+            # Lewati ke lagu berikutnya agar antrean (100 lagu) tidak terhenti
+            await payload.player.skip(force=True)
+
+    async def on_wavelink_track_stuck(self, payload: wavelink.TrackStuckEventPayload):
+        logger.warning(f"Wavelink Track Stuck on track {payload.track.title}")
+        if payload.player:
+            # Lewati ke lagu berikutnya agar antrean tidak terhenti
+            await payload.player.skip(force=True)
 
     async def on_wavelink_websocket_closed(self, payload: wavelink.WebsocketClosedEventPayload):
         logger.warning(f"Wavelink Websocket Closed: Code={payload.code}, Reason={payload.reason}")
@@ -106,6 +141,161 @@ class QueuePagination(discord.ui.View):
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
+class PlaylistCommands(commands.Cog):
+    def __init__(self):
+        pass
+
+    @commands.group(aliases=['pl'], invoke_without_command=True)
+    async def playlist(self, ctx):
+        await ctx.send("Gunakan: `kucaypl create <nama>`, `kucaypl list`, `kucaypl show <nama>`, `kucaypl add <nama> <lagu>`, `kucaypl remove <nama> <index>`, `kucaypl play <nama>`, `kucaypl delete <nama>`")
+
+    @playlist.command()
+    async def create(self, ctx, *, name: str):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (str(ctx.author.id), name)) as cursor:
+                if await cursor.fetchone():
+                    return await ctx.send("Playlist dengan nama tersebut sudah ada!")
+            await db.execute('INSERT INTO playlists (user_id, name) VALUES (?, ?)', (str(ctx.author.id), name))
+            await db.commit()
+            await ctx.send(f"Playlist **{name}** berhasil dibuat!")
+
+    @playlist.command()
+    async def list(self, ctx):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT name FROM playlists WHERE user_id = ?', (str(ctx.author.id),)) as cursor:
+                rows = await cursor.fetchall()
+                if not rows:
+                    return await ctx.send("Anda belum memiliki playlist satupun.")
+                msg = "**Daftar Playlist Anda:**\n" + "\n".join(f"- {r[0]}" for r in rows)
+                await ctx.send(msg)
+
+    @playlist.command()
+    async def add(self, ctx, name: str, *, query: str):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (str(ctx.author.id), name)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return await ctx.send("Playlist tidak ditemukan!")
+                playlist_id = row[0]
+                
+            tracks = await wavelink.Playable.search(query)
+            if not tracks:
+                return await ctx.send("Lagu tidak ditemukan.")
+            
+            # Jika yang ditambahkan adalah single track / hasil pencarian
+            track = tracks[0] if isinstance(tracks, list) and not isinstance(tracks, wavelink.Playlist) else (tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0])
+            
+            await db.execute('INSERT INTO playlist_tracks (playlist_id, track_query, track_title) VALUES (?, ?, ?)', (playlist_id, query, track.title))
+            await db.commit()
+            
+            if ctx.voice_client:
+                vc: wavelink.Player = ctx.voice_client
+                if getattr(vc, 'active_playlist_id', None) == playlist_id:
+                    await vc.queue.put_wait(track)
+                    if not vc.playing:
+                        await vc.play(vc.queue.get())
+                        
+            await ctx.send(f"Berhasil menambahkan **{track.title}** ke playlist **{name}**")
+
+    @playlist.command()
+    async def show(self, ctx, *, name: str):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (str(ctx.author.id), name)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return await ctx.send("Playlist tidak ditemukan!")
+                playlist_id = row[0]
+                
+            async with db.execute('SELECT track_title FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,)) as cursor:
+                rows = await cursor.fetchall()
+                if not rows:
+                    return await ctx.send(f"Playlist **{name}** masih kosong.")
+                msg = f"**Isi Playlist {name}:**\n" + "\n".join(f"{i+1}. {r[0]}" for i, r in enumerate(rows))
+                await ctx.send(msg[:2000])
+
+    @playlist.command()
+    async def remove(self, ctx, name: str, index: int):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (str(ctx.author.id), name)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return await ctx.send("Playlist tidak ditemukan!")
+                playlist_id = row[0]
+            
+            async with db.execute('SELECT id, track_title FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,)) as cursor:
+                rows = await cursor.fetchall()
+                if index < 1 or index > len(rows):
+                    return await ctx.send("Index tidak valid!")
+                
+                track_id = rows[index-1][0]
+                track_title = rows[index-1][1]
+                await db.execute('DELETE FROM playlist_tracks WHERE id = ?', (track_id,))
+                await db.commit()
+                await ctx.send(f"Berhasil menghapus **{track_title}** dari playlist **{name}**")
+
+    @playlist.command()
+    async def delete(self, ctx, *, name: str):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (str(ctx.author.id), name)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return await ctx.send("Playlist tidak ditemukan!")
+                playlist_id = row[0]
+            
+            await db.execute('DELETE FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,))
+            await db.execute('DELETE FROM playlists WHERE id = ?', (playlist_id,))
+            await db.commit()
+            await ctx.send(f"Playlist **{name}** berhasil dihapus!")
+
+    @playlist.command()
+    async def play(self, ctx, *, name: str):
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (str(ctx.author.id), name)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return await ctx.send("Playlist tidak ditemukan!")
+                playlist_id = row[0]
+            
+            async with db.execute('SELECT track_query FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,)) as cursor:
+                rows = await cursor.fetchall()
+                if not rows:
+                    return await ctx.send(f"Playlist **{name}** masih kosong.")
+                
+                if not ctx.author.voice:
+                    return await ctx.send("Masuk ke voice channel dulu ya!")
+
+                if not ctx.voice_client:
+                    vc: wavelink.Player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+                    vc.autoplay = wavelink.AutoPlayMode.partial
+                    vc.queue.mode = wavelink.QueueMode.loop_all
+                else:
+                    vc: wavelink.Player = ctx.voice_client
+                
+                if not vc.queue.is_empty:
+                    vc.queue.clear()
+
+                await ctx.send(f"Memuat {len(rows)} lagu dari playlist **{name}**...")
+                
+                added = 0
+                for r in rows:
+                    try:
+                        tracks = await wavelink.Playable.search(r[0])
+                        if tracks:
+                            track = tracks[0] if isinstance(tracks, list) and not isinstance(tracks, wavelink.Playlist) else (tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0])
+                            await vc.queue.put_wait(track)
+                            added += 1
+                    except Exception as e:
+                        logger.error(f"Failed to load track {r[0]}: {e}")
+                
+                await ctx.send(f"Berhasil memuat {added} lagu ke antrean dan langsung memutarnya!")
+                
+                vc.active_playlist_id = playlist_id
+                
+                if vc.playing:
+                    await vc.skip(force=True)
+                elif not vc.queue.is_empty:
+                    await vc.play(vc.queue.get())
+
 bot = MusicBot()
 
 # ============================================
@@ -140,6 +330,8 @@ async def play(ctx, *, search: str):
         track = tracks[0]
         await vc.queue.put_wait(track)
         await ctx.send(f'Menambahkan ke antrean: **{track.title}**')
+        
+    vc.active_playlist_id = None
 
     # Jika sedang tidak memutar lagu, langsung putar lagu pertama di antrean
     if not vc.playing:
@@ -222,6 +414,7 @@ async def clear(ctx):
         return await ctx.send("Antrean sudah kosong.")
         
     vc.queue.clear()
+    vc.active_playlist_id = None
     await ctx.send("Semua antrean lagu telah dihapus 🗑️")
 
 @bot.command(aliases=['sp'])
@@ -240,6 +433,8 @@ async def switchplaylist(ctx, *, search: str):
     # Bersihkan antrean lama
     if not vc.queue.is_empty:
         vc.queue.clear()
+        
+    vc.active_playlist_id = None
         
     # Cari lagu atau playlist
     tracks = await wavelink.Playable.search(search)
@@ -390,6 +585,8 @@ async def api_play(request):
             track = tracks[0]
             await vc.queue.put_wait(track)
             message = f"Lagu '{track.title}' ditambahkan."
+            
+        vc.active_playlist_id = None
 
         if not vc.playing:
             await vc.play(vc.queue.get())
@@ -472,6 +669,7 @@ async def api_clear(request):
     if vc:
         vc.queue.clear()
         vc.queue.history.clear()
+        vc.active_playlist_id = None
         return web.json_response({"success": True, "message": "Antrean dibersihkan."})
     return web.json_response({"success": False, "error": "Bot not in voice channel"}, status=400)
 
@@ -511,6 +709,149 @@ async def api_move(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def api_playlists(request):
+    async with aiosqlite.connect('bot_database.db') as db:
+        # Untuk web publik, tampilkan semua playlist
+        async with db.execute('SELECT id, user_id, name FROM playlists') as cursor:
+            rows = await cursor.fetchall()
+            playlists = [{"id": r[0], "user_id": r[1], "name": r[2]} for r in rows]
+            return web.json_response({"playlists": playlists})
+
+async def api_playlist_tracks(request):
+    playlist_id = request.match_info.get('id')
+    if not playlist_id:
+        return web.json_response({"success": False, "error": "Invalid ID"}, status=400)
+    
+    async with aiosqlite.connect('bot_database.db') as db:
+        async with db.execute('SELECT id, track_query, track_title FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,)) as cursor:
+            rows = await cursor.fetchall()
+            tracks = [{"id": r[0], "query": r[1], "title": r[2]} for r in rows]
+            return web.json_response({"tracks": tracks})
+
+async def api_playlist_create(request):
+    try:
+        data = await request.json()
+        name = data.get("name")
+        # Di web publik, user_id kita default "WebUser"
+        user_id = data.get("user_id", "WebUser")
+        
+        if not name:
+            return web.json_response({"success": False, "error": "Empty name"}, status=400)
+            
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT id FROM playlists WHERE user_id = ? AND name = ?', (user_id, name)) as cursor:
+                if await cursor.fetchone():
+                    return web.json_response({"success": False, "error": "Playlist already exists"}, status=400)
+            
+            await db.execute('INSERT INTO playlists (user_id, name) VALUES (?, ?)', (user_id, name))
+            await db.commit()
+            return web.json_response({"success": True, "message": "Playlist created"})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def api_playlist_add(request):
+    try:
+        data = await request.json()
+        playlist_id = data.get("playlist_id")
+        query = data.get("query")
+        title = data.get("title")
+        
+        if not playlist_id or not query or not title:
+            return web.json_response({"success": False, "error": "Missing data"}, status=400)
+            
+        async with aiosqlite.connect('bot_database.db') as db:
+            await db.execute('INSERT INTO playlist_tracks (playlist_id, track_query, track_title) VALUES (?, ?, ?)', (playlist_id, query, title))
+            await db.commit()
+            
+            vc = get_player()
+            if vc and getattr(vc, 'active_playlist_id', None) == playlist_id:
+                try:
+                    tracks = await wavelink.Playable.search(query)
+                    if tracks:
+                        track = tracks[0] if isinstance(tracks, list) and not isinstance(tracks, wavelink.Playlist) else (tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0])
+                        await vc.queue.put_wait(track)
+                        if not vc.playing:
+                            await vc.play(vc.queue.get())
+                except Exception as e:
+                    pass
+
+            return web.json_response({"success": True, "message": "Added to playlist"})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def api_playlist_remove(request):
+    try:
+        data = await request.json()
+        track_id = data.get("track_id")
+        if not track_id:
+             return web.json_response({"success": False, "error": "Missing data"}, status=400)
+             
+        async with aiosqlite.connect('bot_database.db') as db:
+            await db.execute('DELETE FROM playlist_tracks WHERE id = ?', (track_id,))
+            await db.commit()
+            return web.json_response({"success": True, "message": "Track removed"})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def api_playlist_delete(request):
+    try:
+        data = await request.json()
+        playlist_id = data.get("playlist_id")
+        if not playlist_id:
+             return web.json_response({"success": False, "error": "Missing data"}, status=400)
+             
+        async with aiosqlite.connect('bot_database.db') as db:
+            await db.execute('DELETE FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,))
+            await db.execute('DELETE FROM playlists WHERE id = ?', (playlist_id,))
+            await db.commit()
+            return web.json_response({"success": True, "message": "Playlist deleted"})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def api_playlist_play(request):
+    vc = get_player()
+    if not vc:
+        return web.json_response({"success": False, "error": "Bot not in voice channel"}, status=400)
+        
+    try:
+        data = await request.json()
+        playlist_id = data.get("playlist_id")
+        
+        if not playlist_id:
+            return web.json_response({"success": False, "error": "Missing playlist_id"}, status=400)
+            
+        async with aiosqlite.connect('bot_database.db') as db:
+            async with db.execute('SELECT track_query FROM playlist_tracks WHERE playlist_id = ?', (playlist_id,)) as cursor:
+                rows = await cursor.fetchall()
+                if not rows:
+                    return web.json_response({"success": False, "error": "Playlist is empty"}, status=400)
+                
+                if not vc.queue.is_empty:
+                    vc.queue.clear()
+
+                added = 0
+                for r in rows:
+                    try:
+                        tracks = await wavelink.Playable.search(r[0])
+                        if tracks:
+                            track = tracks[0] if isinstance(tracks, list) and not isinstance(tracks, wavelink.Playlist) else (tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0])
+                            await vc.queue.put_wait(track)
+                            added += 1
+                    except Exception as e:
+                        logger.error(f"Failed to load track {r[0]}: {e}")
+                        
+                if vc.playing:
+                    await vc.skip(force=True)
+                elif not vc.queue.is_empty:
+                    await vc.play(vc.queue.get())
+                    
+                vc.active_playlist_id = playlist_id
+                    
+                return web.json_response({"success": True, "message": f"Berhasil memutar {added} lagu dari playlist."})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 # --- Static file serving ---
 public_dir = os.path.join(os.path.dirname(__file__), 'public')
 if not os.path.exists(public_dir):
@@ -530,6 +871,13 @@ app.router.add_post('/api/clear', api_clear)
 app.router.add_post('/api/remove', api_remove)
 app.router.add_post('/api/move', api_move)
 app.router.add_post('/api/playnext', api_playnext)
+app.router.add_get('/api/playlists', api_playlists)
+app.router.add_get('/api/playlists/{id}', api_playlist_tracks)
+app.router.add_post('/api/playlists/create', api_playlist_create)
+app.router.add_post('/api/playlists/add', api_playlist_add)
+app.router.add_post('/api/playlists/remove', api_playlist_remove)
+app.router.add_post('/api/playlists/delete', api_playlist_delete)
+app.router.add_post('/api/playlists/play', api_playlist_play)
 app.router.add_get('/', index_handler)
 app.router.add_static('/', public_dir)
 
